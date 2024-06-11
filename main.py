@@ -37,5 +37,5 @@ elif config['model'] == 'heavy':
 else:
     model = LightweightCNN()
     
-trainer = Trainer(model, train_algorithm=config['algorithm'], is_data_augmentation=config['data_augmentation'], is_pretrained=config['pretrained'], is_pruning=config['pruning'])
+trainer = Trainer(model, train_algorithm=config['algorithm'], is_data_augmentation=config['data_augmentation'], is_pretrained=config['pretrained'], is_pruning=config['pruning'], model_type=config['model'])
 trainer.train(train_loader, val_loader)
