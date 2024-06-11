@@ -3,18 +3,19 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset, random_split
 from torchvision import transforms
-from torchvision.models import resnet50
+from torchvision.models import resnet50, resnet18
 import torch.nn.utils.prune as prune
 import random
 
 class Trainer:
-    def __init__(self, model, train_algorithm, is_data_augmentation, is_pretrained, is_pruning):
+    def __init__(self, model, train_algorithm, is_data_augmentation, is_pretrained, is_pruning, model_type):
         self.model = model
         self.train_algorithm = train_algorithm
         self.is_data_augmentation = is_data_augmentation
         self.data_augmentation = None
         self.is_pretrained = is_pretrained
         self.is_pruning = is_pruning
+        self.model_type = model_type
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")       
                 
     def prune_model(self, model, prune_percent=0.2):
@@ -56,14 +57,15 @@ class Trainer:
             param.data = new_flat_params[start_idx:end_idx].reshape(param.shape)
             start_idx = end_idx
             
-    def prune_and_regrow(self, model, train_loader, prune_percent=0.2, regrowth_percent=0.1):
+    def prune_and_regrow(self, model, epoch, prune_percent=0.2, regrowth_percent=0.1):
+        regrowth_percent = regrowth_percent * (1 - (epoch/100))
         old_params = [param.clone().detach() for param in model.parameters()]
         self.prune_model(model, prune_percent)
         new_params = [param.clone().detach() for param in model.parameters()]
         self.regrow_model(new_params, old_params, regrowth_percent)
         return
 
-    def extract_layer_output(model, layer_name, input_image):
+    def extract_layer_output(self, model, layer_name, input_image):
         """
         Extracts the output of a specific layer from a CNN model.
         """
@@ -104,7 +106,10 @@ class Trainer:
         new_val_loader = DataLoader(new_val_dataset, batch_size=32, shuffle=True)
         
         model.fc = None
-        model.fc = nn.Linear(128*8*8, 4)
+        if self.model_type == "heavy":
+            model.fc = nn.Linear(512, 4)
+        else:
+            model.fc = nn.Linear(128*8*8, 4)
         model.to(self.device)
         
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -124,11 +129,14 @@ class Trainer:
             if verbose:
                 print(f"Epoch => {epoch+1} | Train Loss => {loss.item()} | Validation Accuracy => {acc}")
         model.fc = None
-        model.fc = nn.Sequential(
-            nn.Linear(128*8*8, 1024),
-            nn.ReLU(),
-            nn.Linear(1024, 10)
-        )
+        if self.model_type == "heavy":
+            model.fc = nn.Linear(512, 10)
+        else:
+            model.fc = nn.Sequential(
+                nn.Linear(128*8*8, 1024),
+                nn.ReLU(),
+                nn.Linear(1024, 10)
+            )
         print("")
         return
     
@@ -190,7 +198,7 @@ class Trainer:
                 labels = labels.cpu()
 
             if self.is_pruning:
-                self.prune_and_regrow(model, train_loader)
+                self.prune_and_regrow(model, epoch)
             
             acc = self.test_model(model, val_loader, self.device)
             
@@ -217,7 +225,6 @@ class Trainer:
             print(f"FLOPs before pruning: {self.print_flops(student, (1, 3, 32, 32))}")
             print("")
         
-        
         for epoch in range(epochs):
             running_loss = 0.0
             iters = 0
@@ -242,7 +249,7 @@ class Trainer:
                 optimizer.step()
                 
             if self.is_pruning:
-                self.prune_and_regrow(student, train_loader)
+                self.prune_and_regrow(student, epoch)
             
             acc = self.test_model(student, val_loader, self.device)
             
@@ -299,7 +306,7 @@ class Trainer:
                 optimizer.step()
 
             if self.is_pruning:
-                self.prune_and_regrow(student, train_loader)
+                self.prune_and_regrow(student, epoch)
 
             acc = self.test_model(student, val_loader, self.device)
                 
